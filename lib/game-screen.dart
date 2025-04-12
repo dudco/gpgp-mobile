@@ -4,7 +4,9 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:gpgp_app/account-screen.dart';
 import 'package:gpgp_app/mission-screen.dart';
+import 'package:gpgp_app/point-service.dart';
 
+import 'item-service.dart';
 import 'item-screen.dart';
 
 class GameScreen extends StatefulWidget {
@@ -15,43 +17,36 @@ class GameScreen extends StatefulWidget {
 }
 
 class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
+  // 아이템 서비스
+  final ItemService _itemService = ItemService();
+  final PointService _pointService = PointService();
+  
+  // 구매한 물고기와 해초 관련
+  List<Map<String, dynamic>> _purchasedFishes = [];
+  List<Map<String, dynamic>> _purchasedSeaweeds = [];
+  
   // 물고기 애니메이션을 위한 컨트롤러들
   List<AnimationController> _fishControllers = [];
   List<Animation<Offset>> _fishAnimations = [];
 
-  // 물방울 애니메이션 컨트롤러
-  late AnimationController _bubblesController;
+  // 미세플라스틱 애니메이션 컨트롤러
   late AnimationController _microplasticsController;
 
   // 물고기 정보 (위치, 크기, 방향)
   final List<Fish> _fishes = [];
 
-  // 방울 정보
-  final List<Bubble> _bubbles = [];
-
   // 미세플라스틱 정보
-  final List<Microplastic> _microplastics = [];
+  List<Microplastic> _microplastics = [];
+  
+  // 스트림 구독
+  late StreamSubscription _itemSubscription;
+  late StreamSubscription _pointSubscription;
+  
+  // 현재 포인트
+  int _currentPoints = 0;
 
   // 랜덤 생성기
   final Random _random = Random();
-
-  // 물고기 이미지 경로 목록
-  final List<String> _fishImagePaths = [
-    'assets/images/fish1.png',
-    'assets/images/fish2.png',
-    'assets/images/fish3.png',
-    'assets/images/fish4.png',
-    'assets/images/fish5.png',
-    'assets/images/fish6.png',
-  ];
-
-  // 해초 이미지 경로 목록
-  final List<String> _seaweedImagePaths = [
-    'assets/images/seaweed1.png',
-    'assets/images/seaweed2.png',
-    'assets/images/seaweed3.png',
-    'assets/images/seaweed4.png',
-  ];
 
   final AudioPlayer _audioPlayer = AudioPlayer();
 
@@ -59,25 +54,31 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   void initState() {
     super.initState();
 
-    // 물방울 애니메이션 컨트롤러 초기화
-    _bubblesController = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 10),
-    )..repeat();
-
+    // 미세플라스틱 애니메이션 컨트롤러 초기화
     _microplasticsController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 30),
     )..repeat();
 
-    // 물고기 생성 (6마리)
-    _createFishes(6);
+    // 구매한 아이템 로드
+    _loadPurchasedItems();
+    
+    // 아이템 변경 구독
+    _itemSubscription = _itemService.itemsStream.listen((_) {
+      // 아이템이 업데이트되면 화면 갱신
+      _loadPurchasedItems();
+    });
+    
+    // 포인트 변경 이벤트 구독
+    _currentPoints = _pointService.points;
+    _pointSubscription = _pointService.pointsStream.listen((points) {
+      setState(() {
+        _currentPoints = points;
+      });
+    });
 
-    // 물방울 생성 (15개)
-    // _createBubbles(15);
-
-    // 미세 플라스틱 생성 (20개)
-    _createMicroplastics(20);
+    // 미세 플라스틱 생성 (초기 20개)
+    _updateMicroplastics();
 
     // 주기적으로 물고기 움직임 업데이트
     Timer.periodic(const Duration(seconds: 5), (timer) {
@@ -85,7 +86,56 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     });
 
     _initBackgroundMusic();
-
+  }
+  
+  // 구매한 아이템 로드
+  void _loadPurchasedItems() {
+    // 기존 물고기 애니메이션 컨트롤러 해제
+    for (var controller in _fishControllers) {
+      controller.dispose();
+    }
+    _fishControllers = [];
+    _fishAnimations = [];
+    _fishes.clear();
+    
+    // 구매한 아이템 필터링
+    final purchasedItems = _itemService.purchasedItems;
+    
+    // 물고기와 해초 구분
+    _purchasedFishes = purchasedItems.where((item) => 
+      item['id'].toString().startsWith('fish')).toList();
+      
+    _purchasedSeaweeds = purchasedItems.where((item) => 
+      item['id'].toString().startsWith('seaweed')).toList();
+    
+    // 물고기 생성
+    _createFishes();
+    
+    // 미세플라스틱 업데이트
+    _updateMicroplastics();
+    
+    setState(() {});
+  }
+  
+  // 미세플라스틱 업데이트 - 구매한 아이템 수에 따라 감소
+  void _updateMicroplastics() {
+    // 기존 미세플라스틱 지우기
+    _microplastics.clear();
+    
+    // 구매한 총 아이템 수
+    int purchasedItemsCount = _purchasedFishes.length + _purchasedSeaweeds.length;
+    
+    // 최대 미세플라스틱 수 (20개) - 아이템 당 2개씩 감소
+    int maxMicroplastics = 20;
+    int microplasticsCount = maxMicroplastics - (purchasedItemsCount * 2);
+    
+    // 최소 미세플라스틱 수는 0개로 제한
+    microplasticsCount = microplasticsCount < 0 ? 0 : microplasticsCount;
+    
+    // 미세플라스틱 생성
+    if (microplasticsCount > 0) {
+      _createMicroplastics(microplasticsCount);
+    }
   }
 
   // 배경 음악 초기화 및 재생 함
@@ -114,33 +164,35 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       controller.dispose();
     }
     _microplasticsController.dispose();
-    _bubblesController.dispose();
     _audioPlayer.dispose();
+    _itemSubscription.cancel();
 
     super.dispose();
   }
 
   // 물고기 생성 함수 수정 부분
-  void _createFishes(int count) {
-    for (int i = 0; i < count; i++) {
-      // 물고기 크기 (20~50 사이 랜덤)
-      double size = _random.nextDouble() * 30 + 20;
-
+  void _createFishes() {
+    // 구매한 물고기가 없으면 리턴
+    if (_purchasedFishes.isEmpty) return;
+    
+    for (int i = 0; i < _purchasedFishes.length; i++) {
+      final fishData = _purchasedFishes[i];
+      
+      // 물고기 크기 (사이즈는 종류별로 다르게 설정)
+      double size = 80 + (_random.nextDouble() * 20); // 기본 크기 조정
+      
       // 물고기 위치
       double x = _random.nextDouble() * 0.8 + 0.1; // 화면의 10%~90% 사이
       double y = _random.nextDouble() * 0.6 + 0.2; // 화면의 20%~80% 사이
-
-      // 물고기 이미지 선택 - 중복 없이 순서대로
-      String imagePath = _fishImagePaths[i % _fishImagePaths.length];
 
       // 물고기 방향 (오른쪽/왼쪽)
       bool isRightDirection = _random.nextBool();
 
       // 물고기 객체 생성
       _fishes.add(Fish(
-        size: 100,
+        size: size,
         position: Offset(x, y),
-        imagePath: imagePath,
+        imagePath: fishData['image'],
         isRightDirection: isRightDirection,
       ));
 
@@ -226,23 +278,12 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     }
   }
 
-  // 물방울 생성 함수
-  void _createBubbles(int count) {
-    for (int i = 0; i < count; i++) {
-      double size = _random.nextDouble() * 15 + 5; // 5~20 크기
-      double x = _random.nextDouble() * 0.9 + 0.05; // 화면의 5%~95% 사이
-      double startY = 1.0 + (_random.nextDouble() * 0.5); // 화면 밖에서 시작
-
-      _bubbles.add(Bubble(
-        size: size,
-        position: Offset(x, startY),
-        speed: _random.nextDouble() * 0.05 + 0.02, // 상승 속도
-      ));
-    }
-  }
+  // 물방울 생성 함수 제거
 
   // 물고기 애니메이션 업데이트 함수 수정
   void _updateFishAnimations() {
+    if (_fishes.isEmpty) return;
+    
     for (int i = 0; i < _fishes.length; i++) {
       // 물고기의 현재 위치
       Offset currentPosition = _fishAnimations[i].value;
@@ -445,48 +486,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
               );
             },
           ),
-          // 물방울 애니메이션
-          AnimatedBuilder(
-            animation: _bubblesController,
-            builder: (context, child) {
-              return Stack(
-                children: _bubbles.map((bubble) {
-                  // 물방울 위치 업데이트 (위로 움직임)
-                  bubble.position = Offset(
-                    bubble.position.dx,
-                    bubble.position.dy -
-                        bubble.speed * _bubblesController.value,
-                  );
-
-                  // 화면 위로 나가면 다시 아래에서 시작
-                  if (bubble.position.dy < -0.1) {
-                    bubble.position = Offset(
-                      _random.nextDouble() * 0.9 + 0.05,
-                      1.0 + (_random.nextDouble() * 0.5),
-                    );
-                  }
-
-                  return Positioned(
-                    left:
-                        bubble.position.dx * MediaQuery.of(context).size.width,
-                    top:
-                        bubble.position.dy * MediaQuery.of(context).size.height,
-                    child: Opacity(
-                      opacity: 0.7,
-                      child: Container(
-                        width: bubble.size,
-                        height: bubble.size,
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.8),
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                    ),
-                  );
-                }).toList(),
-              );
-            },
-          ),
 
           // 물고기 애니메이션
           ..._buildFishes(),
@@ -505,7 +504,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                   );
                 }),
                 const SizedBox(width: 10),
-                _buildButton('Point', () {}),
+                _buildButton('Points', () {
+                }),
                 const SizedBox(width: 10),
                 _buildButton('Mission', () {
                   Navigator.push(
@@ -525,6 +525,11 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
 
   // 해초 위젯들
   Widget _buildSeaweeds() {
+    // 구매한 해초가 없으면 빈 컨테이너 반환
+    if (_purchasedSeaweeds.isEmpty) {
+      return Container();
+    }
+    
     // 해초 위치 (균등하게 분포)
     List<Offset> positions = [
       const Offset(0.1, 0.95), // 왼쪽 끝
@@ -533,14 +538,20 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       const Offset(0.9, 0.92), // 오른쪽 끝
     ];
 
+    // 구매한 해초의 수만큼만 위치 설정 (최대 4개)
+    int count = _purchasedSeaweeds.length > 4 ? 4 : _purchasedSeaweeds.length;
+
     return Stack(
-      children: List.generate(4, (index) {
+      children: List.generate(count, (index) {
+        // 구매한 해초 데이터 가져오기
+        final seaweedData = _purchasedSeaweeds[index % _purchasedSeaweeds.length];
+        
         return Positioned(
           bottom:
               MediaQuery.of(context).size.height * (1 - positions[index].dy),
           left: MediaQuery.of(context).size.width * positions[index].dx - 30,
           child: Image.asset(
-            _seaweedImagePaths[index],
+            seaweedData['image'],
             height: 80,
           ),
         );
@@ -628,18 +639,7 @@ class Fish {
   });
 }
 
-// 물방울 클래스
-class Bubble {
-  double size;
-  Offset position;
-  double speed;
-
-  Bubble({
-    required this.size,
-    required this.position,
-    required this.speed,
-  });
-}
+// 물방울 클래스 제거
 
 class Microplastic {
   double size;

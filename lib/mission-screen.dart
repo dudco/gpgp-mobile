@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 
 import 'account-screen.dart';
+import 'point-service.dart';
 
 class MissionScreen extends StatefulWidget {
   const MissionScreen({Key? key}) : super(key: key);
@@ -10,6 +12,10 @@ class MissionScreen extends StatefulWidget {
 }
 
 class _MissionScreenState extends State<MissionScreen> {
+  final PointService _pointService = PointService();
+  late StreamSubscription _pointSubscription;
+  int _currentPoints = 0;
+  
   // 미션 데이터
   final List<Mission> _missions = [
     Mission(
@@ -43,6 +49,25 @@ class _MissionScreenState extends State<MissionScreen> {
       isCompleted: false,
     ),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _currentPoints = _pointService.points;
+    
+    // 포인트 변경 이벤트 구독
+    _pointSubscription = _pointService.pointsStream.listen((points) {
+      setState(() {
+        _currentPoints = points;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _pointSubscription.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -89,22 +114,53 @@ class _MissionScreenState extends State<MissionScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // 카드 헤더 (제목, 설명)
+              // 카드 헤더 (제목, 설명, 포인트 표시)
               Padding(
                 padding: const EdgeInsets.all(24.0),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  children: const [
-                    Text(
-                      'Mission List',
-                      style: TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.w400,
-                        color: Color(0xFF1D1B20),
-                      ),
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Mission List',
+                          style: TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.w400,
+                            color: Color(0xFF1D1B20),
+                          ),
+                        ),
+                        // 포인트 표시 위젯
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF7DD30),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: const Color(0xFF1D1B20),
+                              width: 1,
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.star, size: 18, color: Color(0xFF1D1B20)),
+                              const SizedBox(width: 4),
+                              Text(
+                                '$_currentPoints pts',
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: Color(0xFF1D1B20),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
-                    SizedBox(height: 16),
-                    Text(
+                    const SizedBox(height: 16),
+                    const Text(
                       'Complete missions to earn points and help protect our oceans from plastic pollution.',
                       style: TextStyle(
                         fontSize: 14,
@@ -146,10 +202,27 @@ class _MissionScreenState extends State<MissionScreen> {
       children: [
         InkWell(
           onTap: () {
+            // 이미 완료된 미션은 다시 취소할 수 없음
+            if (mission.isCompleted) {
+              _showCompletedMissionMessage();
+              return;
+            }
+            
             setState(() {
-              mission.isCompleted = !mission.isCompleted;
+              mission.isCompleted = true;
             });
+            
+            // 미션 완료 시 포인트 추가
+            _pointService.addPoints(mission.points);
+            _showPointEarnedSnackbar(mission.points);
           },
+          // 완료된 미션은 포인터 커서 변경 및 배경색 변경
+          splashColor: mission.isCompleted 
+              ? Colors.transparent 
+              : Theme.of(context).splashColor,
+          highlightColor: mission.isCompleted 
+              ? Colors.transparent 
+              : Theme.of(context).highlightColor,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             child: Row(
@@ -158,12 +231,17 @@ class _MissionScreenState extends State<MissionScreen> {
                 Expanded(
                   child: Text(
                     mission.title,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w400,
-                      color: Color(0xFF1D1B20),
+                      color: mission.isCompleted 
+                          ? const Color(0xFF65558F) 
+                          : const Color(0xFF1D1B20),
                       letterSpacing: 0.5,
                       height: 1.5,
+                      decoration: mission.isCompleted 
+                          ? TextDecoration.lineThrough 
+                          : TextDecoration.none,
                     ),
                   ),
                 ),
@@ -171,13 +249,24 @@ class _MissionScreenState extends State<MissionScreen> {
                 const SizedBox(width: 16),
 
                 // 포인트 표시
-                Text(
-                  '${mission.points}+',
-                  style: const TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w500,
-                    color: Color(0xFF49454F),
-                    letterSpacing: 0.5,
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: mission.isCompleted 
+                        ? const Color(0xFF65558F).withOpacity(0.1) 
+                        : const Color(0xFFF7DD30).withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '${mission.points}+',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500,
+                      color: mission.isCompleted 
+                          ? const Color(0xFF65558F) 
+                          : const Color(0xFF49454F),
+                      letterSpacing: 0.5,
+                    ),
                   ),
                 ),
 
@@ -214,6 +303,48 @@ class _MissionScreenState extends State<MissionScreen> {
             endIndent: 16,
           ),
       ],
+    );
+  }
+  
+  // 포인트 획득 알림 표시
+  void _showPointEarnedSnackbar(int points) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.star, color: Colors.yellow),
+            const SizedBox(width: 8),
+            Text('You earned $points points!'),
+          ],
+        ),
+        backgroundColor: Colors.blue.shade900,
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+        ),
+      ),
+    );
+  }
+  
+  // 이미 완료된 미션 알림 표시
+  void _showCompletedMissionMessage() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: const [
+            Icon(Icons.check_circle, color: Colors.green),
+            SizedBox(width: 8),
+            Text('Mission already completed!'),
+          ],
+        ),
+        backgroundColor: Colors.blue.shade900,
+        duration: const Duration(seconds: 1),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+        ),
+      ),
     );
   }
 }
